@@ -42,11 +42,14 @@ function screenshot(name) {
 function click({ x, y }) {
   x = Math.round(x); y = Math.round(y);
   if (IS_WIN) {
-    ps(`Add-Type -Namespace W -Name M -MemberDefinition '
-        [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
+    // Injected absolute moves (MOVE|ABSOLUTE = 0x8001) go through the input stack, so hover handling sees them.
+    ps(`Add-Type -AssemblyName System.Windows.Forms
+      Add-Type -Namespace W -Name M -MemberDefinition '
         [DllImport("user32.dll")] public static extern void mouse_event(uint f, uint x, uint y, uint d, System.UIntPtr e);'
-      [W.M]::SetCursorPos(${x - 30}, ${y}); Start-Sleep -Milliseconds 150
-      [W.M]::SetCursorPos(${x}, ${y});      Start-Sleep -Milliseconds 400
+      $b = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+      function Move($px, $py) { [W.M]::mouse_event(0x8001, [uint32]($px * 65535 / ($b.Width - 1)), [uint32]($py * 65535 / ($b.Height - 1)), 0, [System.UIntPtr]::Zero) }
+      Move ${x - 30} ${y}; Start-Sleep -Milliseconds 150
+      Move ${x} ${y};      Start-Sleep -Milliseconds 400
       [W.M]::mouse_event(2, 0, 0, 0, [System.UIntPtr]::Zero); Start-Sleep -Milliseconds 60
       [W.M]::mouse_event(4, 0, 0, 0, [System.UIntPtr]::Zero)`);
   } else {
@@ -95,7 +98,11 @@ async function connect(target) {
     pending[++id] = m => resolve(m.result?.result?.value);
     ws.send(JSON.stringify({ id, method: "Runtime.evaluate", params: { expression, returnByValue: true } }));
   });
-  return { ws, evaluate };
+  const send = (method, params) => new Promise(resolve => {
+    pending[++id] = resolve;
+    ws.send(JSON.stringify({ id, method, params }));
+  });
+  return { ws, evaluate, send };
 }
 
 // Everything the checks need from the page, in one round trip.
@@ -103,6 +110,7 @@ const SNAPSHOT = `(() => {
   const $ = id => document.getElementById(id), actor = $('actor'), msg = $('msg'), song = $('song');
   const visible = [...document.querySelectorAll('#figure video')].find(v => !v.hidden);
   const rect = msg.getBoundingClientRect(), lineHeight = parseFloat(getComputedStyle(msg).lineHeight);
+  const pagePoint = id => { const r = $(id).getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; };
   const screenPoint = id => { const r = $(id).getBoundingClientRect(); return { x: (screenX + r.x + r.width / 2) * devicePixelRatio, y: (screenY + r.y + r.height / 2) * devicePixelRatio }; };
   const measure = html => { const keep = msg.innerHTML; msg.innerHTML = html; const r = msg.getBoundingClientRect(); msg.innerHTML = keep;
     return { lines: Math.round(r.height / lineHeight), top: Math.round(r.top), left: Math.round(r.left), right: Math.round(r.right) }; };
@@ -118,6 +126,7 @@ const SNAPSHOT = `(() => {
     buttons: $('buttons').classList.contains('show'),
     song: { playing: !song.paused, volume: +song.volume.toFixed(2) },
     drink: screenPoint('drink'), later: screenPoint('later'),
+    drinkPage: pagePoint('drink'), laterPage: pagePoint('later'),
   };
 })()`;
 const CLIPS = { enter: 3.5, dance: 5.0, happy: 3.75, sad: 1.63, "sad-walk": 2.96 };   // seconds, from assets/media
@@ -132,6 +141,26 @@ function check(name, ok, detail = "") {
   results.push({ name, ok });
   console.log(`${ok ? "PASS" : "FAIL"}  ${name}${detail ? `  — ${detail}` : ""}`);
 }
+// Hosted CI runners (e.g. GitHub's Windows machines) have no interactive desktop, so OS mouse input never
+// reaches windows there. Locally, a real click must land.
+const HEADLESS_CI = !!process.env.CI;
+
+/** Click a button with the real mouse; if that can't reach the window on CI, click via the protocol instead. */
+async function pressButton(session, s, id, label) {
+  const before = (await session.evaluate(SNAPSHOT)).msg;
+  click(s[id]);
+  for (let i = 0; i < 8; i++) {
+    await sleep(100);
+    if ((await session.evaluate(SNAPSHOT)).msg !== before) return check(`Real mouse click on '${label}' lands`, true);
+  }
+  if (!HEADLESS_CI) return check(`Real mouse click on '${label}' lands`, false, "the OS click did not reach the button");
+  console.log(`SKIP  Real mouse click on '${label}' — no interactive desktop on this CI runner; clicking via DevTools`);
+  const { x, y } = s[`${id}Page`];
+  for (const type of ["mouseMoved", "mousePressed", "mouseReleased"]) {
+    await session.send("Input.dispatchMouseEvent", { type, x, y, button: "left", clickCount: 1 });
+  }
+}
+
 const mlToday = () => JSON.parse(fs.readFileSync(STATE, "utf8")).history?.[new Date().toLocaleDateString("sv")] ?? 0;
 
 async function run() {
@@ -139,7 +168,8 @@ async function run() {
   let target = await waitForPopup(60_000);
   check("Reminder opens on launch (--now)", !!target);
   if (!target) return;
-  let { ws, evaluate } = await connect(target);
+  let session = await connect(target);
+  let { ws, evaluate } = session;
   await sleep(1200);
   screenshot("1-entering");
   let s = await evaluate(SNAPSHOT); snapWidth = s.winW;
@@ -161,11 +191,10 @@ async function run() {
   check("Snooze hint", s.hint === "Remind me in 1 minute", s.hint);
   check("Buttons shown", s.buttons);
 
-  click(s.drink);
-  await sleep(1300);
+  await pressButton(session, s, "drink", "Drinking now");
+  await sleep(1000);
   screenshot("3-celebrating");
   s = await evaluate(SNAPSHOT);
-  check("Real mouse click on 'Drinking now' lands", s.msg.startsWith("Semma"), s.msg);
   check("Celebration reply", s.msg === "Semma, Tester! 🔥 / See you in another 1 minute!", s.msg);
   check("Reply fully on screen", onScreen(s.text), JSON.stringify(s.text));
   check("Jumps for joy", clipName(s.clip) === "happy", clipName(s.clip));
@@ -185,14 +214,14 @@ async function run() {
   const afterDrink = (Date.now() - drankAt) / 1000;
   check("Next reminder after the 1-minute interval", !!target && afterDrink >= 50 && afterDrink <= 85, `${afterDrink.toFixed(0)}s`);
   if (!target) return;
-  ({ ws, evaluate } = await connect(target));
+  session = await connect(target);
+  ({ ws, evaluate } = session);
   await sleep(6000);
   s = await evaluate(SNAPSHOT);
-  click(s.later);
-  await sleep(900);
+  await pressButton(session, s, "later", "I will do it later");
+  await sleep(600);
   screenshot("5-sad");
   s = await evaluate(SNAPSHOT);
-  check("Real mouse click on 'I will do it later' lands", s.msg.startsWith("Okay"), s.msg);
   check("Sad reply", s.msg === "Okay… 😔 / I'll come back in another 1 minute", s.msg);
   check("Reply fully on screen", onScreen(s.text), JSON.stringify(s.text));
   check("Head drops", clipName(s.clip) === "sad", clipName(s.clip));
