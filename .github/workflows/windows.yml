@@ -27,7 +27,7 @@ jobs:
 
       # On Windows the builder can embed the icon in WaterBuddy.exe (needs Wine elsewhere).
       - name: Build installer
-        run: npx electron-builder --win --publish never -c.win.signAndEditExecutable=true
+        run: npx electron-builder --win --publish never "--config.win.signAndEditExecutable=true"
 
       - name: Install silently (per-user, no admin)
         shell: pwsh
