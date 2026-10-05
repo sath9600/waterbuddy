@@ -1,0 +1,77 @@
+{
+  "name": "waterbuddy",
+  "productName": "WaterBuddy",
+  "version": "1.0.0",
+  "description": "A dancing hourly water reminder that tracks how much you drink.",
+  "main": "src/main.js",
+  "author": "Sathish Eathuraj",
+  "license": "UNLICENSED",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "now": "electron . --now",
+    "prepare-media": "node scripts/prepare-media.js",
+    "dist:mac": "electron-builder --mac",
+    "dist:win": "electron-builder --win",
+    "dist": "electron-builder --mac --win"
+  },
+  "devDependencies": {
+    "electron": "^44.5.1",
+    "electron-builder": "^26.15.3",
+    "ffmpeg-static": "^5.3.0"
+  },
+  "build": {
+    "appId": "com.sathish.waterbuddy",
+    "productName": "WaterBuddy",
+    "copyright": "© 2026 Sathish Eathuraj",
+    "files": [
+      "src/**/*",
+      "assets/**/*",
+      "package.json"
+    ],
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
+        }
+      ],
+      "icon": "assets/icon.png",
+      "category": "public.app-category.healthcare-fitness",
+      "extendInfo": {
+        "LSUIElement": true
+      },
+      "identity": "-",
+      "hardenedRuntime": false
+    },
+    "dmg": {
+      "title": "WaterBuddy"
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "assets/icon.png",
+      "signAndEditExecutable": false
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "runAfterFinish": true,
+      "createDesktopShortcut": false,
+      "deleteAppDataOnUninstall": false,
+      "artifactName": "WaterBuddy-Setup-${version}.${ext}"
+    },
+    "toolsets": {
+      "nsis": "1.2.1"
+    }
+  }
+}

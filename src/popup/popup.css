@@ -1,0 +1,60 @@
+html, body {
+  margin: 0; height: 100%; overflow: hidden; background: transparent;
+  font-family: "Arial Rounded MT Bold", "SF Pro Rounded", "Segoe UI", system-ui, sans-serif;
+  user-select: none; cursor: default;
+}
+
+/* Everything that walks on and off together. JS slides it with `transform`. */
+#actor {
+  position: absolute; bottom: 0; left: 0; width: 760px;
+  display: flex; flex-direction: column; align-items: center; justify-content: flex-end;
+  will-change: transform;
+}
+
+/* Speech text — chunky yellow/orange */
+#msg {
+  max-width: 740px; text-align: center; font-size: 36px; line-height: 1.15; font-weight: 900;
+  color: #ffd21f; -webkit-text-stroke: 2px #e0481b; paint-order: stroke fill;
+  text-shadow: 0 3px 0 #b8300c, 0 6px 14px rgba(0, 0, 0, .45);
+  opacity: 0; transform: scale(.4);
+}
+#msg.show { animation: pop .5s cubic-bezier(.2, 1.6, .4, 1) forwards; }
+@keyframes pop { to { opacity: 1; transform: scale(1); } }
+
+/* Today's progress toward the daily goal */
+#progress {
+  width: 300px; margin-top: 10px; padding: 8px 14px 10px; border-radius: 14px;
+  color: #fff; font-size: 14px; text-align: center;
+  background: rgba(15, 25, 45, .78); box-shadow: 0 4px 14px rgba(0, 0, 0, .35);
+}
+#bar { height: 10px; margin-top: 5px; border-radius: 6px; background: rgba(255, 255, 255, .3); overflow: hidden; }
+#fill {
+  height: 100%; width: 0; border-radius: 6px; background: linear-gradient(90deg, #7fd6ff, #0a7de0);
+  transition: width 1s cubic-bezier(.2, 1.2, .4, 1);
+}
+
+#buttons { display: flex; gap: 14px; margin: 14px 0 6px; }
+#buttons.gone { display: none; }   /* after a choice: free the space for the reply */
+button {
+  font: inherit; font-size: 17px; padding: 11px 24px; border: 0; border-radius: 12px;
+  background: #fff; color: #555; box-shadow: 0 4px 14px rgba(0, 0, 0, .35); cursor: pointer;
+  transition: transform .12s;
+}
+button:hover { transform: translateY(-2px) scale(1.04); }
+button:disabled { pointer-events: none; }
+button.primary { color: #fff; background: linear-gradient(#36b3ff, #0a7de0); font-size: 19px; padding: 11px 34px; }
+button small { display: block; font-size: 13px; opacity: .75; margin-top: 2px; }
+
+#progress, #buttons { opacity: 0; transition: opacity .4s; }
+#progress.show, #buttons.show { opacity: 1; }
+
+#figure { height: 470px; display: flex; align-items: flex-end; justify-content: center; }
+#figure video { max-height: 470px; max-width: 540px; filter: drop-shadow(0 10px 18px rgba(0, 0, 0, .45)); }
+#figure video[hidden] { display: none; }
+
+/* Celebration drops */
+.drop { position: absolute; top: 0; font-size: 30px; pointer-events: none; animation: fall 1.4s ease-in forwards; }
+@keyframes fall {
+  from { transform: translateY(-40px) rotate(0); opacity: 1; }
+  to   { transform: translateY(740px) rotate(200deg); opacity: 0; }
+}
