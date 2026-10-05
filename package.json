@@ -13,7 +13,8 @@
     "prepare-media": "node scripts/prepare-media.js",
     "dist:mac": "electron-builder --mac",
     "dist:win": "electron-builder --win",
-    "dist": "electron-builder --mac --win"
+    "dist": "electron-builder --mac --win",
+    "test:e2e": "node test/e2e.js"
   },
   "devDependencies": {
     "electron": "^44.5.1",

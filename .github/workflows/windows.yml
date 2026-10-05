@@ -1,0 +1,60 @@
+name: Windows build & test
+
+# Runs only when the app changes (or by hand), to keep Actions minutes low.
+on:
+  push:
+    branches: [main]
+    paths: ["src/**", "assets/**", "test/**", "package.json", "package-lock.json", ".github/workflows/windows.yml"]
+  workflow_dispatch:
+
+concurrency:
+  group: windows-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      # On Windows the builder can embed the icon in WaterBuddy.exe (needs Wine elsewhere).
+      - name: Build installer
+        run: npx electron-builder --win --publish never -c.win.signAndEditExecutable=true
+
+      - name: Install silently (per-user, no admin)
+        shell: pwsh
+        run: |
+          $setup = Get-ChildItem dist\WaterBuddy-Setup-*.exe | Select-Object -First 1
+          Start-Process $setup.FullName -ArgumentList '/S' -Wait
+          Start-Sleep -Seconds 3
+          Get-Process WaterBuddy -ErrorAction SilentlyContinue | Stop-Process -Force
+          $exe = "$env:LOCALAPPDATA\Programs\WaterBuddy\WaterBuddy.exe"
+          if (-not (Test-Path $exe)) { throw "WaterBuddy.exe not installed at $exe" }
+          "EXE=$exe" >> $env:GITHUB_ENV
+
+      - name: End-to-end test
+        shell: pwsh
+        run: node test/e2e.js "$env:EXE"
+
+      - name: Upload screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-screenshots
+          path: test/screenshots/
+          retention-days: 7
+
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: WaterBuddy-Setup-windows
+          path: dist/WaterBuddy-Setup-*.exe
+          retention-days: 3

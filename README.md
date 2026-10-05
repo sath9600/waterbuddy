@@ -91,8 +91,24 @@ npm run dist:mac     # dist/WaterBuddy-<version>-arm64.dmg and dist/WaterBuddy-<
 npm run dist         # both
 ```
 
-Both can be built from a Mac. The Windows `.exe` keeps Electron's default file icon, because embedding the
-icon from a Mac needs Wine. Build on Windows (or with Wine installed) to get the WaterBuddy icon there too.
+Both can be built from a Mac, but a Mac-built Windows `.exe` keeps Electron's default file icon (embedding it
+needs Wine). The installer attached to each **Windows build & test** run on GitHub is built on Windows and has the
+WaterBuddy icon.
+
+### Testing
+
+`test/e2e.js` drives an installed build end to end. It launches the app with 1-minute timers, clicks the buttons
+with the real mouse, checks the animations, text, sound, water log, snooze and timer, and takes screenshots. Your
+own `state.json` is backed up and restored, but the reminders will appear on screen while it runs (about 4 minutes).
+
+```bash
+npm run test:e2e -- ~/Applications/WaterBuddy.app/Contents/MacOS/WaterBuddy                  # macOS
+npm run test:e2e -- "$env:LOCALAPPDATA\Programs\WaterBuddy\WaterBuddy.exe"                 # Windows (PowerShell)
+```
+
+On GitHub, **Windows build & test** (`.github/workflows/windows.yml`) builds the Windows installer, installs it on a
+Windows runner and runs this test whenever the app changes. You can also start it from the Actions tab. Screenshots
+and the installer are attached to each run.
 
 ## Project layout
 
@@ -103,5 +119,6 @@ src/preload.js       the only bridge between the popup page and the app
 src/popup/           the reminder page (HTML/CSS/JS)
 assets/              icons, transparent clips, song
 scripts/             prepare-media.js (green screen → transparent WebM)
+test/e2e.js          end-to-end test of an installed build
 source/              green-screen source clips and character image
 ```
