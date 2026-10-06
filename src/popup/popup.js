@@ -12,7 +12,7 @@ const CELEBRATE_MS = 3200;   // jumping after "Drinking now"
 const EXIT_HAPPY_MS = 4500;
 const EXIT_SAD_MS = 5500;    // the sad walk is slower
 
-const actor = $("actor"), msg = $("msg"), song = $("song");
+const actor = $("actor"), msg = $("msg"), song = $("song"), sadSong = $("sad-song");
 
 // ── Clips ────────────────────────────────────────────────────────────────────
 
@@ -72,11 +72,21 @@ function rainDrops() {
   }
 }
 
-function fadeOutSong() {
-  const t = setInterval(() => {
-    song.volume = Math.max(0, song.volume - 0.05);
-    if (song.volume === 0) { clearInterval(t); song.pause(); }
-  }, 80);
+const SONG_VOLUME = 0.6;
+
+/** Ramp an <audio> element's volume to `to` over `ms`; pauses it when it reaches 0. (Timer-driven, so it can't stall.) */
+function fade(audio, to, ms) {
+  const from = audio.volume, start = Date.now();
+  return new Promise(resolve => {
+    const timer = setInterval(() => {
+      const k = Math.min(1, (Date.now() - start) / ms);
+      audio.volume = from + (to - from) * k;
+      if (k < 1) return;
+      clearInterval(timer);
+      if (to === 0) audio.pause();
+      resolve();
+    }, 30);
+  });
 }
 
 // Clicks pass through the transparent window except over the buttons.
@@ -97,7 +107,8 @@ async function main() {
   showProgress(cfg.ml, cfg.goalMl);
   $("later-hint").textContent = `Remind me in ${duration(cfg.snoozeMinutes)}`;
 
-  if (cfg.song) { song.src = cfg.song; song.volume = 0.6; song.play().catch(() => {}); }
+  if (cfg.song) { song.src = cfg.song; song.volume = SONG_VOLUME; song.play().catch(() => {}); }
+  if (cfg.sadSong) sadSong.src = cfg.sadSong;   // preload; plays after "I will do it later"
 
   // Dance in from the left, then dance with the bottle in the middle.
   actor.style.transform = `translateX(${offLeft()}px)`;
@@ -128,11 +139,14 @@ async function main() {
     await slideTo(offLeft(), EXIT_HAPPY_MS, "cubic-bezier(.4,0,.75,1)");
   } else {
     say(`Okay… 😔<br>I'll come back in another ${duration(cfg.snoozeMinutes)}`);
-    fadeOutSong();
+    // Swap to the character's sad song if he has one, otherwise just let the music fade away.
+    fade(song, 0, cfg.sadSong ? 500 : 1600);
+    if (cfg.sadSong) { sadSong.volume = 0; sadSong.play().catch(() => {}); fade(sadSong, SONG_VOLUME, 700); }
     play(clips.sad, { loop: false });                      // head drops…
     await wait((cfg.durations?.sad ?? 1.6) * 1000);
     play(clips["sad-walk"]);                               // …then a slow sad walk out
     await slideTo(offLeft(), EXIT_SAD_MS, "cubic-bezier(.4,0,.75,1)");
+    if (cfg.sadSong) await fade(sadSong, 0, 900);           // let the sad song trail off
   }
   api.done();
 }

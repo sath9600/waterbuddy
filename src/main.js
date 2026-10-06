@@ -40,15 +40,20 @@ function mediaPath(file) {
   return fs.existsSync(user) ? user : path.join(ASSETS, file);
 }
 
-const firstSong = dir => fs.existsSync(dir) && fs.readdirSync(dir).sort().find(n => SONG_EXTS.includes(path.extname(n).toLowerCase()));
+/** The audio file named <base>.<ext> in `dir`, if any (e.g. song.mp3, sad-song.m4a). */
+const findAudio = (dir, base) => SONG_EXTS.map(ext => base + ext).find(f => fs.existsSync(path.join(dir, f)));
 
-/** URL of the song to play: one the user dropped into the media folder, else the character's own. */
-function songUrl(characterId) {
-  const user = firstSong(userMediaDir());
+/**
+ * URL for a character's `song` (plays during the reminder) or `sad-song` (optional; plays after "I will do it later").
+ * A file with that name in the user's media folder overrides the character's own.
+ */
+function audioUrl(characterId, base) {
+  const user = findAudio(userMediaDir(), base);
   if (user) return `/media/${encodeURIComponent(user)}`;
-  const own = firstSong(path.join(CHARACTERS_DIR, characterId));
+  const own = findAudio(path.join(CHARACTERS_DIR, characterId), base);
   return own ? `/characters/${characterId}/${encodeURIComponent(own)}` : null;
 }
+
 
 /** Characters bundled in assets/characters/<id>/, each described by its character.json. */
 const characters = (() => {
@@ -228,7 +233,7 @@ ipcMain.handle("popup:config", () => {
     intervalMinutes: s.intervalMinutes, snoozeMinutes: s.snoozeMinutes,
     character: c.id, durations: c.durations,
     clips: Object.fromEntries(MEDIA_ROLES.map(r => [r, clip(r)])),
-    song: songUrl(c.id),
+    song: audioUrl(c.id, "song"), sadSong: audioUrl(c.id, "sad-song"),
   };
 });
 

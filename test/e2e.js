@@ -146,6 +146,7 @@ const SNAPSHOT = `(() => { ${TO_SCREEN}
     progress: $('progress-text').textContent, hint: $('later-hint').textContent,
     buttons: $('buttons').classList.contains('show'),
     song: { playing: !song.paused, volume: +song.volume.toFixed(2), src: song.getAttribute('src') },
+    sadSong: { playing: !$('sad-song').paused, volume: +$('sad-song').volume.toFixed(2), src: $('sad-song').getAttribute('src') },
     drink: { screen: screenPoint('drink'), page: pagePoint('drink') },
     later: { screen: screenPoint('later'), page: pagePoint('later') },
   };
@@ -223,6 +224,7 @@ async function run() {
   check("Dance-walks in", s.clip === "enter" && s.playing, s.clip);
   check("Song plays", s.song.playing, `volume ${s.song.volume}`);
   check("Plays the chosen character's song", s.song.src === "/characters/suriya/song.mp3", s.song.src);
+  check("Sad song waits quietly", !s.sadSong.playing, JSON.stringify(s.sadSong));
   check("Buttons hidden while entering", !s.buttons);
 
   await sleep(4800);
@@ -275,7 +277,8 @@ async function run() {
   screenshot("6-sad-walk");
   s = await evaluate(SNAPSHOT);
   check("Then walks out sadly", s.clip === "sad-walk" && s.x < s.centre, `${s.clip}, x=${s.x}px`);
-  check("Song fades out", !s.song.playing && s.song.volume === 0, JSON.stringify(s.song));
+  check("Main song fades out", !s.song.playing && s.song.volume === 0, JSON.stringify(s.song));
+  check("Suriya's sad song takes over", s.sadSong.playing && s.sadSong.volume > 0.5 && s.sadSong.src === "/characters/suriya/sad-song.mp3", JSON.stringify(s.sadSong));
   check("Nothing logged for 'later'", mlToday() === 750, `${mlToday()} ml`);
   ws.close();
   check("Closes after leaving", await waitForClose(10_000));

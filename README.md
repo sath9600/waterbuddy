@@ -7,7 +7,7 @@ how much you've had. On first launch a picker lets you choose your buddy; switch
 
 - **Drinking now 💧** logs a glass. He jumps for joy, says *"See you in another 1 hour!"* and dances back out.
 - **I will do it later** snoozes for 10 minutes. He drops his head, says *"I'll come back in another 10 minutes"*
-  and walks out sadly.
+  and walks out sadly. Suriya also switches to his sad song as he leaves; Vijay's music just fades out.
 
 The tray/menu-bar icon shows today's total and has the menu: last 7 days, *I drank a glass*, *Undo last glass*,
 glass size, daily goal, character, *Show reminder now*, pause, start at login and quit.
@@ -51,8 +51,8 @@ Glass size, goal and start at login can be changed from the menu. To change `nam
 
 ## Media
 
-Each character lives in `assets/characters/<id>/`: five clips, `song.mp3` and `character.json` (name, menu order and
-clip lengths). Use **Open media folder…** in the menu and drop in files with these names to override the chosen
+Each character lives in `assets/characters/<id>/`: five clips, `song.mp3`, an optional `sad-song.mp3` (plays after
+*I will do it later*) and `character.json` (name, menu order and clip lengths). Use **Open media folder…** in the menu and drop in files with these names to override the chosen
 character's own:
 
 | File | Used for |
@@ -62,7 +62,8 @@ character's own:
 | `happy.webm` | Celebration after *Drinking now* (loops) |
 | `sad.webm` | Head drop after *I will do it later* (plays once, ~1.6 s) |
 | `sad-walk.webm` | Slow sad walk out (loops) |
-| any `.mp3` / `.m4a` / `.wav` / `.ogg` | Background song (instead of the character's) |
+| `song.mp3` (or `.m4a` / `.wav` / `.ogg`) | Song during the reminder (instead of the character's) |
+| `sad-song.mp3` (or `.m4a` / `.wav` / `.ogg`) | Song after *I will do it later* (instead of the character's) |
 
 Clips must be **WebM with a transparent background** (VP9 + alpha).
 
@@ -87,8 +88,8 @@ npm run prepare-media -- suriya  # just one
 ```
 
 Names, trim points and each character's key colour are at the top of `scripts/prepare-media.js`. To add a
-character, add an entry there, put its four green-screen clips in `source/<id>/` and a `song.mp3` in
-`assets/characters/<id>/`, then run the script.
+character, add an entry there, put its four green-screen clips in `source/<id>/` and a `song.mp3` (plus an optional
+`sad-song.mp3`) in `assets/characters/<id>/`, then run the script.
 
 ### Building installers
 
@@ -106,8 +107,9 @@ WaterBuddy icon.
 
 `test/e2e.js` drives an installed build end to end as a first run: it picks Suriya in the character picker, then
 checks his animations, song, text, buttons, water log, snooze and timer (1-minute timers), and takes screenshots. It
-uses its own temporary data folder, so your settings and water log are never touched; the reminders do appear on
-screen while it runs (about 4 minutes). It clicks with the real mouse — set `E2E_DEVTOOLS_CLICKS=1` to click through
+uses its own temporary data folder, so your settings and water log are never touched. Its reminders **do appear on
+screen** for about 4 minutes and use 1-minute test timers and the name "Tester" — they're not your real reminders, so
+prefer the GitHub run below when you're using the computer. It clicks with the real mouse — set `E2E_DEVTOOLS_CLICKS=1` to click through
 DevTools instead if you'll be using the computer meanwhile.
 
 ```bash
