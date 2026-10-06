@@ -108,7 +108,7 @@ function updateTray() {
   const next = paused ? "Reminders paused"
     : `Next reminder: ${new Date(nextFire).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`;
 
-  if (IS_MAC) tray.setTitle(` ${amount(ml)}`);
+  // Icon only (no total beside it): a crowded menu bar hides items that don't fit, especially behind the notch.
   tray.setToolTip(`WaterBuddy — ${summary}`);
 
   const weekday = new Intl.DateTimeFormat([], { weekday: "short", day: "numeric", month: "short" });
