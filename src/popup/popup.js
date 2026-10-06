@@ -9,7 +9,6 @@ const duration = min => (min >= 60 ? count(+(min / 60).toFixed(1), "hour") : cou
 
 const ENTER_MS = 4500;       // happy dance-walk in from the left edge
 const CELEBRATE_MS = 3200;   // jumping after "Drinking now"
-const HEAD_DOWN_MS = 1600;   // length of the sad.webm clip
 const EXIT_HAPPY_MS = 4500;
 const EXIT_SAD_MS = 5500;    // the sad walk is slower
 
@@ -18,11 +17,12 @@ const actor = $("actor"), msg = $("msg"), song = $("song");
 // ── Clips ────────────────────────────────────────────────────────────────────
 
 /** Load a clip fully into memory first so switching between them never flashes or stalls. */
-async function loadClip(url) {
+async function loadClip(url, role) {
   const blob = await (await fetch(url)).blob();
   const v = Object.assign(document.createElement("video"), {
     src: URL.createObjectURL(blob), muted: true, playsInline: true, loop: true, hidden: true,
   });
+  v.dataset.role = role;
   $("figure").append(v);
   if (v.readyState < 2) await new Promise(r => v.addEventListener("loadeddata", r, { once: true }));
   return v;
@@ -91,7 +91,8 @@ document.addEventListener("mousemove", e => {
 async function main() {
   const cfg = await api.config();
   const names = ["enter", "dance", "happy", "sad", "sad-walk"];
-  const clips = Object.fromEntries(await Promise.all(names.map(async n => [n, await loadClip(cfg.clips[n])])));
+  const clips = Object.fromEntries(await Promise.all(names.map(async n => [n, await loadClip(cfg.clips[n], n)])));
+  document.body.dataset.character = cfg.character;
 
   showProgress(cfg.ml, cfg.goalMl);
   $("later-hint").textContent = `Remind me in ${duration(cfg.snoozeMinutes)}`;
@@ -129,7 +130,7 @@ async function main() {
     say(`Okay… 😔<br>I'll come back in another ${duration(cfg.snoozeMinutes)}`);
     fadeOutSong();
     play(clips.sad, { loop: false });                      // head drops…
-    await wait(HEAD_DOWN_MS);
+    await wait((cfg.durations?.sad ?? 1.6) * 1000);
     play(clips["sad-walk"]);                               // …then a slow sad walk out
     await slideTo(offLeft(), EXIT_SAD_MS, "cubic-bezier(.4,0,.75,1)");
   }

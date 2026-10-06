@@ -1,17 +1,19 @@
 # WaterBuddy 💧
 
-A dancing hourly water reminder for **macOS and Windows**. Every hour a cartoon character dances in from the left
-edge of the screen, asks you to drink water and keeps count of how much you've had.
+A dancing hourly water reminder for **macOS and Windows**. Every hour your chosen cartoon buddy — **Vijay** or
+**Suriya** — dances in from the left edge of the screen to his own song, asks you to drink water and keeps count of
+how much you've had. On first launch a picker lets you choose your buddy; switch any time from the 💧 menu
+(**Character**).
 
 - **Drinking now 💧** logs a glass. He jumps for joy, says *"See you in another 1 hour!"* and dances back out.
 - **I will do it later** snoozes for 10 minutes. He drops his head, says *"I'll come back in another 10 minutes"*
   and walks out sadly.
 
 The tray/menu-bar icon shows today's total and has the menu: last 7 days, *I drank a glass*, *Undo last glass*,
-glass size, daily goal, *Show reminder now*, pause, start at login and quit.
+glass size, daily goal, character, *Show reminder now*, pause, start at login and quit.
 
-> **Personal use only.** The character is a likeness of actor Vijay and the bundled song is copyrighted. Don't
-> publish or redistribute builds that contain them; swap in your own media first (see [Media](#media)).
+> **Personal use only.** The characters are likenesses of actors Vijay and Suriya and the bundled songs are
+> copyrighted. Don't publish or redistribute builds that contain them; swap in your own media first (see [Media](#media)).
 
 ## Install
 
@@ -39,7 +41,7 @@ Everything is stored in `state.json`:
 ```json
 {
   "settings": { "name": "Sathish", "intervalMinutes": 60, "snoozeMinutes": 10,
-                "glassMl": 250, "goalMl": 2500, "launchAtLogin": true },
+                "glassMl": 250, "goalMl": 2500, "launchAtLogin": true, "character": "vijay" },
   "history": { "2026-10-05": 2500 }
 }
 ```
@@ -49,7 +51,9 @@ Glass size, goal and start at login can be changed from the menu. To change `nam
 
 ## Media
 
-Use **Open media folder…** in the menu and drop in files with these names to override the bundled ones:
+Each character lives in `assets/characters/<id>/`: five clips, `song.mp3` and `character.json` (name, menu order and
+clip lengths). Use **Open media folder…** in the menu and drop in files with these names to override the chosen
+character's own:
 
 | File | Used for |
 |---|---|
@@ -58,7 +62,7 @@ Use **Open media folder…** in the menu and drop in files with these names to o
 | `happy.webm` | Celebration after *Drinking now* (loops) |
 | `sad.webm` | Head drop after *I will do it later* (plays once, ~1.6 s) |
 | `sad-walk.webm` | Slow sad walk out (loops) |
-| any `.mp3` / `.m4a` / `.wav` / `.ogg` | Background song |
+| any `.mp3` / `.m4a` / `.wav` / `.ogg` | Background song (instead of the character's) |
 
 Clips must be **WebM with a transparent background** (VP9 + alpha).
 
@@ -74,14 +78,17 @@ npm run now          # run and show a reminder immediately
 
 ### Changing the character clips
 
-The green-screen originals (made with Higgsfield) live in `source/`. After replacing one, regenerate the trimmed,
-transparent WebM files in `assets/media/`:
+The green-screen originals (made with Higgsfield) live in `source/<id>/`. After replacing one, regenerate the
+trimmed, transparent WebM files and `character.json` in `assets/characters/<id>/`:
 
 ```bash
-npm run prepare-media
+npm run prepare-media            # every character
+npm run prepare-media -- suriya  # just one
 ```
 
-Trim points and the key colour are at the top of `scripts/prepare-media.js`.
+Names, trim points and each character's key colour are at the top of `scripts/prepare-media.js`. To add a
+character, add an entry there, put its four green-screen clips in `source/<id>/` and a `song.mp3` in
+`assets/characters/<id>/`, then run the script.
 
 ### Building installers
 
@@ -97,13 +104,16 @@ WaterBuddy icon.
 
 ### Testing
 
-`test/e2e.js` drives an installed build end to end. It launches the app with 1-minute timers, clicks the buttons
-with the real mouse, checks the animations, text, sound, water log, snooze and timer, and takes screenshots. Your
-own `state.json` is backed up and restored, but the reminders will appear on screen while it runs (about 4 minutes).
+`test/e2e.js` drives an installed build end to end as a first run: it picks Suriya in the character picker, then
+checks his animations, song, text, buttons, water log, snooze and timer (1-minute timers), and takes screenshots. It
+uses its own temporary data folder, so your settings and water log are never touched; the reminders do appear on
+screen while it runs (about 4 minutes). It clicks with the real mouse — set `E2E_DEVTOOLS_CLICKS=1` to click through
+DevTools instead if you'll be using the computer meanwhile.
 
 ```bash
 npm run test:e2e -- ~/Applications/WaterBuddy.app/Contents/MacOS/WaterBuddy                  # macOS
 npm run test:e2e -- "$env:LOCALAPPDATA\Programs\WaterBuddy\WaterBuddy.exe"                 # Windows (PowerShell)
+npm run test:e2e -- node_modules/electron/dist/Electron.app/Contents/MacOS/Electron .     # dev build (macOS)
 ```
 
 On GitHub, **Windows build & test** (`.github/workflows/windows.yml`) builds the Windows installer, installs it on a
@@ -117,8 +127,10 @@ src/main.js          app lifecycle, tray menu, scheduler, popup window
 src/store.js         settings + daily water log (state.json)
 src/preload.js       the only bridge between the popup page and the app
 src/popup/           the reminder page (HTML/CSS/JS)
-assets/              icons, transparent clips, song
+src/picker/          the first-run character picker
+assets/characters/   one folder per character: transparent clips, song, character.json
+assets/              icons
 scripts/             prepare-media.js (green screen → transparent WebM)
 test/e2e.js          end-to-end test of an installed build
-source/              green-screen source clips and character image
+source/<id>/         green-screen source clips and character image, per character
 ```

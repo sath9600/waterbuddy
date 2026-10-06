@@ -1,0 +1,11 @@
+{
+  "name": "Suriya",
+  "order": 1,
+  "durations": {
+    "enter": 4,
+    "dance": 4.2,
+    "happy": 4,
+    "sad": 1.8,
+    "sad-walk": 2.6
+  }
+}

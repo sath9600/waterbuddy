@@ -16,6 +16,7 @@ const DEFAULTS = {
   glassMl: 250,
   goalMl: 2500,
   launchAtLogin: true,
+  character: null,   // chosen in the picker on first run
 };
 
 /** Local calendar day, e.g. "2026-10-05". */

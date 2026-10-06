@@ -1,21 +1,22 @@
 // End-to-end test of an installed WaterBuddy build (macOS or Windows).
 //
-//   node test/e2e.js <path to the WaterBuddy executable>
+//   node test/e2e.js <path to the WaterBuddy executable> [extra args, e.g. "." for a dev Electron binary]
 //
-// Launches the app with 1-minute timers and drives it through the Chrome DevTools Protocol, clicking the buttons
-// with the real OS mouse (which also proves click-through switches off over them). The user's state.json is
-// backed up first and restored afterwards. Screenshots go to test/screenshots/. Exits non-zero on any failure.
+// Starts the app as a first run (in its own temporary data folder, so your real settings and water log are never
+// touched) with 1-minute timers, picks Suriya in the character picker, then drives a full reminder flow through the
+// Chrome DevTools Protocol, clicking with the real OS mouse (which also proves click-through switches off over the
+// buttons). Screenshots go to test/screenshots/. Exits non-zero on any failure.
 const { execFileSync, spawn } = require("node:child_process");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 
-const EXE = process.argv[2];
+const [EXE, ...EXTRA_ARGS] = process.argv.slice(2);
 if (!EXE || !fs.existsSync(EXE)) { console.error("usage: node test/e2e.js <WaterBuddy executable>"); process.exit(2); }
 
 const IS_WIN = process.platform === "win32";
 const PORT = 9333;
-const DATA = IS_WIN ? path.join(process.env.APPDATA, "WaterBuddy") : path.join(os.homedir(), "Library/Application Support/WaterBuddy");
+const DATA = fs.mkdtempSync(path.join(os.tmpdir(), "waterbuddy-e2e-"));
 const STATE = path.join(DATA, "state.json");
 const SHOTS = path.join(__dirname, "screenshots");
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -76,16 +77,18 @@ async function targets() {
   try { return await (await fetch(`http://127.0.0.1:${PORT}/json`)).json(); } catch { return []; }
 }
 const isPopup = t => t.url.startsWith("app://waterbuddy/popup");
-async function waitForPopup(timeoutMs) {
+const isPicker = t => t.url.startsWith("app://waterbuddy/picker");
+async function waitForTarget(match, timeoutMs) {
   for (const end = Date.now() + timeoutMs; Date.now() < end; await sleep(300)) {
-    const t = (await targets()).find(isPopup);
+    const t = (await targets()).find(match);
     if (t) return t;
   }
   return null;
 }
-async function waitForClose(timeoutMs) {
+const waitForPopup = timeoutMs => waitForTarget(isPopup, timeoutMs);
+async function waitForClose(timeoutMs, match = isPopup) {
   for (const end = Date.now() + timeoutMs; Date.now() < end; await sleep(300)) {
-    if (!(await targets()).some(isPopup)) return true;
+    if (!(await targets()).some(match)) return true;
   }
   return false;
 }
@@ -105,32 +108,48 @@ async function connect(target) {
   return { ws, evaluate, send };
 }
 
+// Viewport rect → screen point at its centre (allows for a title bar on framed windows). macOS mouse events use
+// points; Windows mouse input uses physical pixels, so scale by the display density there only.
+const TO_SCREEN = `const toScreen = r => {
+  const border = (outerWidth - innerWidth) / 2, top = outerHeight - innerHeight - border, k = ${IS_WIN ? "devicePixelRatio" : 1};
+  return { x: (screenX + border + r.x + r.width / 2) * k, y: (screenY + top + r.y + r.height / 2) * k };
+};`;
+
+const PICKER = `(() => { ${TO_SCREEN}
+  const cards = [...document.querySelectorAll('.card')], suriya = cards.find(c => c.dataset.id === 'suriya');
+  const r = suriya.getBoundingClientRect();
+  return {
+    names: cards.map(c => c.querySelector('.name').textContent),
+    playing: cards.filter(c => { const v = c.querySelector('video'); return v && !v.paused && v.readyState >= 2; }).length,
+    suriya: { screen: toScreen(r), page: { x: r.x + r.width / 2, y: r.y + r.height / 2 } },
+  };
+})()`;
+
 // Everything the checks need from the page, in one round trip.
-const SNAPSHOT = `(() => {
+const SNAPSHOT = `(() => { ${TO_SCREEN}
   const $ = id => document.getElementById(id), actor = $('actor'), msg = $('msg'), song = $('song');
   const visible = [...document.querySelectorAll('#figure video')].find(v => !v.hidden);
   const rect = msg.getBoundingClientRect(), lineHeight = parseFloat(getComputedStyle(msg).lineHeight);
   const pagePoint = id => { const r = $(id).getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; };
-  const screenPoint = id => { const r = $(id).getBoundingClientRect(); return { x: (screenX + r.x + r.width / 2) * devicePixelRatio, y: (screenY + r.y + r.height / 2) * devicePixelRatio }; };
+  const screenPoint = id => toScreen($(id).getBoundingClientRect());
   const measure = html => { const keep = msg.innerHTML; msg.innerHTML = html; const r = msg.getBoundingClientRect(); msg.innerHTML = keep;
     return { lines: Math.round(r.height / lineHeight), top: Math.round(r.top), left: Math.round(r.left), right: Math.round(r.right) }; };
   return {
     x: Math.round(new DOMMatrix(getComputedStyle(actor).transform).m41),
     centre: Math.round((innerWidth - actor.offsetWidth) / 2), winW: innerWidth,
+    character: document.body.dataset.character,
     clips: document.querySelectorAll('#figure video').length,
-    clip: visible ? +visible.duration.toFixed(2) : null, playing: visible ? !visible.paused : null,
+    clip: visible?.dataset.role ?? null, playing: visible ? !visible.paused : null,
     msg: msg.innerText.replace(/\\n/g, ' / '),
     text: { lines: Math.round(rect.height / lineHeight), top: Math.round(rect.top), left: Math.round(rect.left), right: Math.round(rect.right) },
     longest: measure("Okay… 😔<br>I'll come back in another 10 minutes"),
     progress: $('progress-text').textContent, hint: $('later-hint').textContent,
     buttons: $('buttons').classList.contains('show'),
-    song: { playing: !song.paused, volume: +song.volume.toFixed(2) },
-    drink: screenPoint('drink'), later: screenPoint('later'),
-    drinkPage: pagePoint('drink'), laterPage: pagePoint('later'),
+    song: { playing: !song.paused, volume: +song.volume.toFixed(2), src: song.getAttribute('src') },
+    drink: { screen: screenPoint('drink'), page: pagePoint('drink') },
+    later: { screen: screenPoint('later'), page: pagePoint('later') },
   };
 })()`;
-const CLIPS = { enter: 3.5, dance: 5.0, happy: 3.75, sad: 1.63, "sad-walk": 2.96 };   // seconds, from assets/media
-const clipName = d => Object.keys(CLIPS).find(k => Math.abs(CLIPS[k] - d) < 0.1) ?? `unknown (${d}s)`;
 const onScreen = t => t.lines === 2 && t.top >= 0 && t.left >= 0 && t.right <= snapWidth;
 let snapWidth = Infinity;
 
@@ -141,49 +160,76 @@ function check(name, ok, detail = "") {
   results.push({ name, ok });
   console.log(`${ok ? "PASS" : "FAIL"}  ${name}${detail ? `  — ${detail}` : ""}`);
 }
-// Hosted CI runners (e.g. GitHub's Windows machines) have no interactive desktop, so OS mouse input never
-// reaches windows there. Locally, a real click must land.
-const HEADLESS_CI = !!process.env.CI;
+// Hosted CI runners (e.g. GitHub's Windows machines) have no interactive desktop, so OS mouse input never reaches
+// windows there; they click through DevTools instead. Set E2E_DEVTOOLS_CLICKS=1 to do the same locally — e.g. while
+// you're using the computer, since a real-mouse test moving your cursor could then click into other apps.
+const DEVTOOLS_CLICKS = !!process.env.CI || !!process.env.E2E_DEVTOOLS_CLICKS;
 
-/** Click a button with the real mouse; if that can't reach the window on CI, click via the protocol instead. */
-async function pressButton(session, s, id, label) {
-  const before = (await session.evaluate(SNAPSHOT)).msg;
-  click(s[id]);
-  for (let i = 0; i < 8; i++) {
-    await sleep(100);
-    if ((await session.evaluate(SNAPSHOT)).msg !== before) return check(`Real mouse click on '${label}' lands`, true);
+/**
+ * Click with the real mouse; if that can't reach the window on CI, click via the protocol instead.
+ * `point` is { screen, page }; `landed()` says whether the click took effect.
+ */
+async function press(session, point, label, landed) {
+  if (!DEVTOOLS_CLICKS) {
+    click(point.screen);
+    for (let i = 0; i < 10; i++) {
+      await sleep(100);
+      if (await landed()) return check(`Real mouse click on '${label}' lands`, true);
+    }
+    return check(`Real mouse click on '${label}' lands`, false, "the OS click did not reach it");
   }
-  if (!HEADLESS_CI) return check(`Real mouse click on '${label}' lands`, false, "the OS click did not reach the button");
-  console.log(`SKIP  Real mouse click on '${label}' — no interactive desktop on this CI runner; clicking via DevTools`);
-  const { x, y } = s[`${id}Page`];
+  console.log(`SKIP  Real mouse click on '${label}' — clicking via DevTools (CI or E2E_DEVTOOLS_CLICKS)`);
+  const { x, y } = point.page;
   for (const type of ["mouseMoved", "mousePressed", "mouseReleased"]) {
     await session.send("Input.dispatchMouseEvent", { type, x, y, button: "left", clickCount: 1 });
   }
 }
+async function pressButton(session, s, id, label) {
+  const before = s.msg;
+  await press(session, s[id], label, async () => (await session.evaluate(SNAPSHOT))?.msg !== before);
+}
 
-const mlToday = () => JSON.parse(fs.readFileSync(STATE, "utf8")).history?.[new Date().toLocaleDateString("sv")] ?? 0;
+const savedState = () => JSON.parse(fs.readFileSync(STATE, "utf8"));
+const mlToday = () => savedState().history?.[new Date().toLocaleDateString("sv")] ?? 0;
 
 async function run() {
-  // 1 ── Shows on launch, dances in from the left, "Drinking now"
-  let target = await waitForPopup(60_000);
-  check("Reminder opens on launch (--now)", !!target);
+  // 0 ── First run: the character picker, choose Suriya
+  let target = await waitForTarget(isPicker, 60_000);
+  check("First run opens the character picker", !!target);
   if (!target) return;
   let session = await connect(target);
+  await sleep(2500);
+  screenshot("0-picker");
+  const p = await session.evaluate(PICKER);
+  check("Picker offers Vijay and Suriya", p.names.join(",") === "Vijay,Suriya", p.names.join(", "));
+  check("Both previews dance", p.playing === 2, `${p.playing} playing`);
+  await press(session, p.suriya, "Choose Suriya", async () => !(await targets()).some(isPicker));
+  session.ws.close();
+  check("Picker closes after choosing", await waitForClose(5_000, isPicker));
+  check("Choice saved", savedState().settings?.character === "suriya", savedState().settings?.character);
+
+  // 1 ── A reminder with the new buddy right away; dances in from the left, "Drinking now"
+  target = await waitForPopup(15_000);
+  check("Reminder shows right after choosing", !!target);
+  if (!target) return;
+  session = await connect(target);
   let { ws, evaluate } = session;
   await sleep(1200);
   screenshot("1-entering");
   let s = await evaluate(SNAPSHOT); snapWidth = s.winW;
+  check("Uses the chosen character", s.character === "suriya", s.character);
   check("All 5 clips load", s.clips === 5, `${s.clips}`);
   check("Enters from the left edge", s.x < 100, `x=${s.x}px`);
-  check("Dance-walks in", clipName(s.clip) === "enter" && s.playing, clipName(s.clip));
+  check("Dance-walks in", s.clip === "enter" && s.playing, s.clip);
   check("Song plays", s.song.playing, `volume ${s.song.volume}`);
+  check("Plays the chosen character's song", s.song.src === "/characters/suriya/song.mp3", s.song.src);
   check("Buttons hidden while entering", !s.buttons);
 
   await sleep(4800);
   screenshot("2-middle");
   s = await evaluate(SNAPSHOT);
   check("Stops in the middle", Math.abs(s.x - s.centre) <= 2, `x=${s.x}px, centre=${s.centre}px`);
-  check("Dances with the bottle", clipName(s.clip) === "dance" && s.playing, clipName(s.clip));
+  check("Dances with the bottle", s.clip === "dance" && s.playing, s.clip);
   check("Greeting", s.msg === "Hey, Tester! / Time to drink water! 💧", s.msg);
   check("Greeting fully on screen", onScreen(s.text), JSON.stringify(s.text));
   check("Longest reply fits on screen", onScreen(s.longest), JSON.stringify(s.longest));
@@ -197,14 +243,14 @@ async function run() {
   s = await evaluate(SNAPSHOT);
   check("Celebration reply", s.msg === "Semma, Tester! 🔥 / See you in another 1 minute!", s.msg);
   check("Reply fully on screen", onScreen(s.text), JSON.stringify(s.text));
-  check("Jumps for joy", clipName(s.clip) === "happy", clipName(s.clip));
+  check("Jumps for joy", s.clip === "happy", s.clip);
   check("Glass logged", mlToday() === 750, `${mlToday()} ml`);
   check("Progress updated", s.progress === "Today: 750 ml of 2.75 L", s.progress);
 
   await sleep(3400);
   screenshot("4-leaving");
   s = await evaluate(SNAPSHOT);
-  check("Dances back out to the left", clipName(s.clip) === "enter" && s.x < s.centre, `${clipName(s.clip)}, x=${s.x}px`);
+  check("Dances back out to the left", s.clip === "enter" && s.x < s.centre, `${s.clip}, x=${s.x}px`);
   ws.close();
   check("Closes after leaving", await waitForClose(10_000));
   const drankAt = Date.now();
@@ -224,11 +270,11 @@ async function run() {
   s = await evaluate(SNAPSHOT);
   check("Sad reply", s.msg === "Okay… 😔 / I'll come back in another 1 minute", s.msg);
   check("Reply fully on screen", onScreen(s.text), JSON.stringify(s.text));
-  check("Head drops", clipName(s.clip) === "sad", clipName(s.clip));
+  check("Head drops", s.clip === "sad", s.clip);
   await sleep(1800);
   screenshot("6-sad-walk");
   s = await evaluate(SNAPSHOT);
-  check("Then walks out sadly", clipName(s.clip) === "sad-walk" && s.x < s.centre, `${clipName(s.clip)}, x=${s.x}px`);
+  check("Then walks out sadly", s.clip === "sad-walk" && s.x < s.centre, `${s.clip}, x=${s.x}px`);
   check("Song fades out", !s.song.playing && s.song.volume === 0, JSON.stringify(s.song));
   check("Nothing logged for 'later'", mlToday() === 750, `${mlToday()} ml`);
   ws.close();
@@ -247,22 +293,24 @@ async function run() {
 (async () => {
   fs.mkdirSync(SHOTS, { recursive: true });
   fs.mkdirSync(DATA, { recursive: true });
-  const backup = fs.existsSync(STATE) ? fs.readFileSync(STATE) : null;
   fs.writeFileSync(STATE, JSON.stringify({
     settings: { name: "Tester", intervalMinutes: 1, snoozeMinutes: 1, glassMl: 250, goalMl: 2750, launchAtLogin: true },
     history: { [new Date().toLocaleDateString("sv")]: 500 },
   }));
 
-  const app = spawn(EXE, [`--remote-debugging-port=${PORT}`, "--now"], { detached: true, stdio: "ignore" });
+  const app = spawn(EXE, [...EXTRA_ARGS, `--remote-debugging-port=${PORT}`], {
+    detached: true, stdio: "ignore", env: { ...process.env, WATERBUDDY_DATA_DIR: DATA },
+  });
   try {
     await run();
   } catch (err) {
     check("Test ran without crashing", false, err.stack);
   } finally {
-    try { process.kill(app.pid); } catch {}
-    if (IS_WIN) try { execFileSync("taskkill", ["/F", "/IM", path.basename(EXE)], { stdio: "ignore" }); } catch {}
+    // Stop only the copy we started (your own WaterBuddy keeps running), then drop its temporary data.
+    if (IS_WIN) try { execFileSync("taskkill", ["/F", "/T", "/PID", String(app.pid)], { stdio: "ignore" }); } catch {}
+    else try { process.kill(app.pid); } catch {}
     await sleep(2000);
-    if (backup) fs.writeFileSync(STATE, backup); else fs.rmSync(STATE, { force: true });
+    fs.rmSync(DATA, { recursive: true, force: true });
   }
 
   const failed = results.filter(r => !r.ok).length;

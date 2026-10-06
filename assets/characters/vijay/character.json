@@ -1,0 +1,11 @@
+{
+  "name": "Vijay",
+  "order": 0,
+  "durations": {
+    "enter": 3.5,
+    "dance": 5,
+    "happy": 3.7,
+    "sad": 1.6,
+    "sad-walk": 2.9
+  }
+}

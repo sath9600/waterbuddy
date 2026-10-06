@@ -1,0 +1,40 @@
+:root {
+  --bg-top: #16305a; --bg-bottom: #0b1628;
+  --card: rgba(255, 255, 255, .06); --card-hover: rgba(255, 255, 255, .11); --card-border: rgba(255, 255, 255, .12);
+  --text: #f4f7fb; --muted: #a9b8cf; --accent: #36b3ff; --accent-deep: #0a7de0; --gold: #ffd21f;
+}
+html, body { margin: 0; height: 100%; }
+body {
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 22px;
+  padding: 0 28px; box-sizing: border-box;
+  background: radial-gradient(ellipse at 50% 0%, var(--bg-top), var(--bg-bottom) 70%);
+  color: var(--text); font-family: "SF Pro Rounded", "Segoe UI", system-ui, sans-serif;
+  user-select: none; cursor: default;
+}
+header { text-align: center; }
+h1 { margin: 0 0 6px; font-size: 28px; font-weight: 800; }
+header p { margin: 0 auto; max-width: 520px; color: var(--muted); font-size: 14px; line-height: 1.45; }
+
+#cards { display: flex; gap: 22px; }
+.card {
+  position: relative; width: 340px; height: 430px; padding: 0; border: 1px solid var(--card-border); border-radius: 22px;
+  display: flex; flex-direction: column; align-items: center; justify-content: flex-end; overflow: hidden;
+  background: radial-gradient(circle at 50% 38%, rgba(54, 179, 255, .22), transparent 62%), var(--card);
+  color: inherit; font: inherit; cursor: pointer;
+  transition: transform .18s ease, background-color .18s ease, border-color .18s ease, box-shadow .18s ease;
+}
+.card:hover, .card:focus-visible {
+  transform: translateY(-4px); background-color: var(--card-hover); border-color: var(--accent);
+  box-shadow: 0 14px 34px rgba(0, 0, 0, .35); outline: none;
+}
+.card video { height: 320px; filter: drop-shadow(0 10px 14px rgba(0, 0, 0, .45)); pointer-events: none; }
+.card .name { margin: 6px 0 2px; font-size: 24px; font-weight: 800; }
+.card .cta {
+  margin: 8px 0 18px; padding: 9px 28px; border-radius: 12px; font-size: 15px; font-weight: 700; color: #fff;
+  background: linear-gradient(var(--accent), var(--accent-deep)); box-shadow: 0 4px 12px rgba(0, 0, 0, .3);
+}
+.card .badge {
+  position: absolute; top: 14px; left: 14px; padding: 4px 10px; border-radius: 999px;
+  background: var(--gold); color: #3a2a00; font-size: 12px; font-weight: 800;
+}
+.card.chosen { border-color: var(--gold); }

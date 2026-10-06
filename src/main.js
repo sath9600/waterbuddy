@@ -7,48 +7,68 @@ const { Store, amount } = require("./store");
 
 const IS_MAC = process.platform === "darwin";
 const ASSETS = path.join(__dirname, "..", "assets");
+const CHARACTERS_DIR = path.join(ASSETS, "characters");
 const POPUP_HEIGHT = 780;
 const MEDIA_ROLES = ["enter", "dance", "happy", "sad", "sad-walk"];
 const SONG_EXTS = [".mp3", ".m4a", ".wav", ".ogg"];
 
 app.commandLine.appendSwitch("autoplay-policy", "no-user-gesture-required");   // play the song without a click
 
+// A separate data folder (settings, water log, single-instance lock) for tests and trying things out.
+if (process.env.WATERBUDDY_DATA_DIR) app.setPath("userData", path.resolve(process.env.WATERBUDDY_DATA_DIR));
+
 // One running copy. Launching again (e.g. `WaterBuddy --now`) is forwarded to it.
 if (!app.requestSingleInstanceLock()) app.exit(0);
 
-// app://waterbuddy/popup/… serves the reminder page; app://waterbuddy/media/… serves clips and the song.
-// One custom origin keeps everything same-origin and away from file:// quirks.
+// One custom origin, app://waterbuddy, keeps everything same-origin and away from file:// quirks:
+//   /popup/…  the reminder page        /picker/…  the character picker
+//   /characters/<id>/…  bundled clips  /media/…   the song and the user's own overrides
 protocol.registerSchemesAsPrivileged([
   { scheme: "app", privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true } },
 ]);
 
-let store, tray, popup;
+let store, tray, popup, picker;
 let nextFire = 0;
 let paused = false;
+let quitting = false;   // windows closing because the app is quitting aren't user choices
 
 const userMediaDir = () => path.join(app.getPath("userData"), "media");
 
 /** A file the user dropped into the media folder wins over the bundled one. */
 function mediaPath(file) {
   const user = path.join(userMediaDir(), file);
-  return fs.existsSync(user) ? user : path.join(ASSETS, "media", file);
+  return fs.existsSync(user) ? user : path.join(ASSETS, file);
 }
 
-function songFile() {
-  for (const dir of [userMediaDir(), path.join(ASSETS, "media")]) {
-    const f = fs.existsSync(dir) && fs.readdirSync(dir).sort().find(n => SONG_EXTS.includes(path.extname(n).toLowerCase()));
-    if (f) return f;
-  }
-  return null;
+const firstSong = dir => fs.existsSync(dir) && fs.readdirSync(dir).sort().find(n => SONG_EXTS.includes(path.extname(n).toLowerCase()));
+
+/** URL of the song to play: one the user dropped into the media folder, else the character's own. */
+function songUrl(characterId) {
+  const user = firstSong(userMediaDir());
+  if (user) return `/media/${encodeURIComponent(user)}`;
+  const own = firstSong(path.join(CHARACTERS_DIR, characterId));
+  return own ? `/characters/${characterId}/${encodeURIComponent(own)}` : null;
 }
+
+/** Characters bundled in assets/characters/<id>/, each described by its character.json. */
+const characters = (() => {
+  let list = null;
+  return () => list ??= fs.readdirSync(CHARACTERS_DIR).flatMap(id => {
+    try { return [{ id, ...JSON.parse(fs.readFileSync(path.join(CHARACTERS_DIR, id, "character.json"), "utf8")) }]; }
+    catch { return []; }
+  }).sort((a, b) => (a.order ?? 99) - (b.order ?? 99));
+})();
+const character = () => characters().find(c => c.id === store.settings.character);
 
 function registerProtocol() {
   protocol.handle("app", req => {
     const { host, pathname } = new URL(req.url);
-    const [, folder, ...rest] = pathname.split("/");
-    const name = path.basename(decodeURIComponent(rest.join("/")));   // basename: never escape the folder
+    const [, folder, ...rest] = pathname.split("/").map(decodeURIComponent);
+    const name = path.basename(rest.at(-1) || "");   // basename: never escape the folder
+    const charId = folder === "characters" && rest.length === 2 && characters().some(c => c.id === rest[0]) ? rest[0] : null;
     const file = host !== "waterbuddy" || !name ? null
-               : folder === "popup" ? path.join(__dirname, "popup", name)
+               : folder === "popup" || folder === "picker" ? path.join(__dirname, folder, name)
+               : charId ? path.join(CHARACTERS_DIR, charId, name)
                : folder === "media" ? mediaPath(name)
                : null;
     if (!file || !fs.existsSync(file)) return new Response("Not found", { status: 404 });
@@ -64,7 +84,7 @@ function schedule(minutes) {
 }
 
 function tick() {
-  if (!paused && !popup && Date.now() >= nextFire) showPopup();
+  if (!paused && !popup && character() && Date.now() >= nextFire) showPopup();
   updateTray();   // also rolls the totals over at midnight
 }
 
@@ -106,6 +126,12 @@ function updateTray() {
     { label: `Glass size: ${amount(s.glassMl)}`, submenu: choices([150, 200, 250, 300, 500, 750, 1000], "glassMl") },
     { label: `Daily goal: ${amount(s.goalMl)}`, submenu: choices([1500, 1750, 2000, 2250, 2500, 2750, 3000, 3250, 3500, 4000], "goalMl") },
     { type: "separator" },
+    { label: `Character: ${character()?.name ?? "not chosen"}`, submenu: [
+      ...characters().map(c => ({ label: c.name, type: "radio", checked: c.id === s.character, click: () => chooseCharacter(c.id, false) })),
+      { type: "separator" },
+      { label: "Choose with preview…", click: openPicker },
+    ] },
+    { type: "separator" },
     { label: "Show reminder now", click: showPopup },
     { label: paused ? "Resume reminders" : "Pause reminders", click: togglePause },
     { label: "Start at login", type: "checkbox", checked: s.launchAtLogin, click: i => setLaunchAtLogin(i.checked) },
@@ -131,11 +157,48 @@ function openMediaFolder() {
   shell.openPath(userMediaDir());
 }
 
+// ── Character picker ─────────────────────────────────────────────────────────
+
+/** A small normal window with a dancing preview of each character. Opens on first run and from the menu. */
+function openPicker() {
+  if (picker) { picker.show(); picker.focus(); return; }
+  picker = new BrowserWindow({
+    width: 820, height: 600, resizable: false, maximizable: false, fullscreenable: false, show: false,
+    alwaysOnTop: true,   // macOS won't let a background app come to the front; keep the question visible
+    title: "Choose your WaterBuddy", backgroundColor: "#0f1d33", autoHideMenuBar: true,
+    webPreferences: { preload: path.join(__dirname, "preload.js"), contextIsolation: true, sandbox: true },
+  });
+  picker.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+  picker.webContents.on("will-navigate", e => e.preventDefault());
+  picker.once("ready-to-show", () => { picker.show(); picker.focus(); if (IS_MAC) app.focus({ steal: true }); });
+  picker.on("closed", () => {
+    picker = null;
+    // Closed on first run without choosing: start with the first character; it can be changed from the menu.
+    if (!character() && !quitting) chooseCharacter(characters()[0].id, false);
+  });
+  picker.loadURL("app://waterbuddy/picker/index.html");
+}
+
+function chooseCharacter(id, preview) {
+  if (!characters().some(c => c.id === id)) return;
+  store.set("character", id);
+  updateTray();
+  picker?.close();
+  if (preview) { popup?.close(); setTimeout(showPopup, 400); }   // meet your new buddy right away
+}
+
+ipcMain.handle("picker:list", () => ({
+  current: store.settings.character,
+  characters: characters().map(c => ({ id: c.id, name: c.name, preview: `/characters/${c.id}/dance.webm` })),
+}));
+ipcMain.on("picker:choose", (_e, id) => chooseCharacter(id, true));
+
 // ── Reminder popup ───────────────────────────────────────────────────────────
 
 /** A transparent, click-through strip along the bottom of the screen the cursor is on. */
 function showPopup() {
   if (popup) return;
+  if (!character()) return openPicker();
   const { workArea: wa } = screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
   const height = Math.min(POPUP_HEIGHT, wa.height);
 
@@ -157,12 +220,15 @@ function showPopup() {
 }
 
 ipcMain.handle("popup:config", () => {
-  const s = store.settings;
+  const s = store.settings, c = character();
+  // A clip the user dropped into the media folder overrides the character's own.
+  const clip = role => fs.existsSync(path.join(userMediaDir(), `${role}.webm`)) ? `/media/${role}.webm` : `/characters/${c.id}/${role}.webm`;
   return {
     name: s.name, ml: store.mlToday, glassMl: s.glassMl, goalMl: s.goalMl,
     intervalMinutes: s.intervalMinutes, snoozeMinutes: s.snoozeMinutes,
-    clips: Object.fromEntries(MEDIA_ROLES.map(r => [r, `/media/${r}.webm`])),
-    song: songFile() && `/media/${encodeURIComponent(songFile())}`,
+    character: c.id, durations: c.durations,
+    clips: Object.fromEntries(MEDIA_ROLES.map(r => [r, clip(r)])),
+    song: songUrl(c.id),
   };
 });
 
@@ -179,6 +245,7 @@ ipcMain.on("popup:done", () => popup?.close());
 
 app.on("second-instance", (_e, argv) => { if (argv.includes("--now")) showPopup(); });
 app.on("window-all-closed", () => { /* keep running in the tray */ });
+app.on("before-quit", () => { quitting = true; });
 
 app.whenReady().then(() => {
   if (IS_MAC) app.dock.hide();
@@ -195,5 +262,6 @@ app.whenReady().then(() => {
   setInterval(tick, 15_000);
   powerMonitor.on("resume", tick);
 
-  if (process.argv.includes("--now")) showPopup();
+  if (!character()) openPicker();                      // first run: pick a buddy (shows a reminder once chosen)
+  else if (process.argv.includes("--now")) showPopup();
 });
